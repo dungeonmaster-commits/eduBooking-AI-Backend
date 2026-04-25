@@ -19,6 +19,17 @@ const config = {
     bcrypt: {
       rounds: parseInt(process.env.BCRYPT_ROUNDS, 10) || 12,
     },
+    youtube: {
+      apiKey: process.env.YOUTUBE_API_KEY,
+      baseUrl: 'https://www.googleapis.com/youtube/v3',
+    },
+  
+    udemy: {
+      clientId:     process.env.UDEMY_CLIENT_ID     || null,
+      clientSecret: process.env.UDEMY_CLIENT_SECRET || null,
+      baseUrl:      'https://www.udemy.com/api-2.0',
+      isConfigured: !!(process.env.UDEMY_CLIENT_ID && process.env.UDEMY_CLIENT_SECRET),
+    },
   };
   
   // Fail fast — crash early if critical config is missing

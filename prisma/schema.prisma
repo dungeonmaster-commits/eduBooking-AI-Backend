@@ -17,12 +17,7 @@ enum Role {
   ADMIN
 }
 
-enum ResourceType {
-  COURSE
-  LAB
-  HARDWARE
-  SEMINAR_HALL
-}
+
 
 enum BookingStatus {
   PENDING
@@ -36,6 +31,30 @@ enum PaymentStatus {
   SUCCESS
   FAILED
   REFUNDED
+}
+enum ResourceType {
+  COURSE
+  LAB
+  HARDWARE
+  SEMINAR_HALL
+  YOUTUBE_VIDEO
+  YOUTUBE_PLAYLIST
+  UDEMY_COURSE
+  COURSERA_COURSE
+  STUDY_MATERIAL
+}
+
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  DROPPED
 }
 
 // ============================================================
@@ -62,6 +81,9 @@ model User {
   receivedMessages Message[]      @relation("ReceivedMessages")
   progress         Progress[]
   resources        Resource[]     @relation("InstructorResources") // ✅ added
+  ratings    ResourceRating[]
+  postLikes    PostLike[]
+  commentLikes CommentLike[]
   
   @@map("users")
 }
@@ -114,30 +136,59 @@ model RefreshToken {
 // ============================================================
 
 model Resource {
-  id            String        @id @default(uuid())
-  title         String
-  description   String?
-  type          ResourceType
-  price         Decimal       @db.Decimal(10, 2)
-  capacity      Int?
-  location      String?
-  isAvailable   Boolean       @default(true)
-  thumbnailUrl  String?
-  tags          String[]
-  instructorId  String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id              String          @id @default(uuid())
+  title           String
+  description     String?
+  type            ResourceType
+  difficultyLevel DifficultyLevel @default(BEGINNER)
+  price           Decimal         @db.Decimal(10, 2) @default(0)
+  capacity        Int?            // for labs/halls
+  location        String?         // for physical resources
+  isAvailable     Boolean         @default(true)
+  thumbnailUrl    String?
+  tags            String[]
+  branch          String[]        // target branches e.g. ["CSE", "ECE"]
+  semester        Int[]           // target semesters e.g. [3, 4, 5]
+  duration        Int?            // in minutes
+  rating          Float?          // average rating
+  totalRatings    Int             @default(0)
+  enrolledCount   Int             @default(0)
 
-  // ✅ Back-relation for User → resources
-  instructor    User?         @relation("InstructorResources", fields: [instructorId], references: [id])
+  // External resource fields
+  isExternal      Boolean         @default(false)
+  externalUrl     String?         // original URL
+  externalId      String?         // platform's own ID
+  externalPlatform String?        // "youtube" | "udemy" | "coursera"
+  externalData    Json?           // raw API response stored as JSON
 
-  // ✅ Back-relation for Booking → resource
-  bookings      Booking[]
+  instructorId    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
-  // ✅ Back-relation for Progress → resource
-  progress      Progress[]
+  // Relations
+  instructor      User?           @relation("InstructorResources", fields: [instructorId], references: [id])
+  bookings        Booking[]
+  progress        Progress[]
+  ratings         ResourceRating[]
 
   @@map("resources")
+}
+
+// New: Resource ratings by students
+model ResourceRating {
+  id          String    @id @default(uuid())
+  resourceId  String
+  userId      String
+  rating      Int       // 1 to 5
+  review      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  resource    Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@unique([resourceId, userId])  // one rating per user per resource
+  @@map("resource_ratings")
 }
 
 // ============================================================
@@ -145,19 +196,29 @@ model Resource {
 // ============================================================
 
 model Booking {
-  id            String        @id @default(uuid())
-  userId        String
-  resourceId    String
-  status        BookingStatus @default(PENDING)
-  startTime     DateTime
-  endTime       DateTime
-  notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id           String        @id @default(uuid())
+  userId       String
+  resourceId   String
+  status       BookingStatus @default(PENDING)
+  startTime    DateTime
+  endTime      DateTime
+  notes        String?
+  
+  // Cancellation tracking
+  cancelledAt     DateTime?
+  cancellationReason String?
+  
+  // Confirmation tracking
+  confirmedAt  DateTime?
+  confirmedBy  String?       // admin userId who confirmed
 
-  user          User          @relation(fields: [userId], references: [id])
-  resource      Resource      @relation(fields: [resourceId], references: [id])
-  payment       Payment?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id])
+  resource     Resource      @relation(fields: [resourceId], references: [id])
+  payment      Payment?
 
   @@map("bookings")
 }
@@ -186,34 +247,80 @@ model Payment {
 // COMMUNITY — Posts & Comments
 // ============================================================
 
+// ── Post ──────────────────────────────────────────────────────────────────────
 model Post {
   id          String    @id @default(uuid())
   userId      String
   title       String
   content     String
   tags        String[]
-  likesCount  Int       @default(0)
+  imageUrl    String?   // optional image attachment
+
+  // Counters — stored for fast reads without joins
+  likesCount    Int     @default(0)
+  commentsCount Int     @default(0)
+  viewsCount    Int     @default(0)
+
+  isEdited    Boolean   @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  user        User      @relation(fields: [userId], references: [id])
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   comments    Comment[]
+  likes       PostLike[]
 
   @@map("posts")
 }
 
-model Comment {
-  id          String    @id @default(uuid())
-  postId      String
-  userId      String
-  content     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+// ── PostLike — separate table for like tracking ───────────────────────────────
+model PostLike {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
 
-  post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user        User      @relation(fields: [userId], references: [id])
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])  // one like per user per post
+  @@map("post_likes")
+}
+
+// ── Comment ───────────────────────────────────────────────────────────────────
+model Comment {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  content   String
+  isEdited  Boolean  @default(false)
+
+  // Counters
+  likesCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes     CommentLike[]
 
   @@map("comments")
+}
+
+// ── CommentLike ───────────────────────────────────────────────────────────────
+model CommentLike {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])  // one like per user per comment
+  @@map("comment_likes")
 }
 
 // ============================================================
@@ -239,17 +346,35 @@ model Message {
 // ============================================================
 
 model Progress {
-  id             String    @id @default(uuid())
+  id             String         @id @default(uuid())
   userId         String
   resourceId     String
-  percentage     Float     @default(0)
-  lastAccessedAt DateTime  @default(now())
-  completedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
 
-  user           User      @relation(fields: [userId], references: [id])
-  resource       Resource  @relation(fields: [resourceId], references: [id]) // ✅ added
+  // Core tracking
+  status         ProgressStatus @default(NOT_STARTED)
+  percentage     Float          @default(0)    // 0.0 to 100.0
+
+  // Engagement metrics — used by AI recommendation engine later
+  timeSpentMins  Int            @default(0)    // total minutes spent
+  sessionCount   Int            @default(0)    // how many times accessed
+  notes          String?                       // personal notes
+  personalRating Int?                          // student's own rating 1-5
+
+  // External resource tracking
+  isExternal       Boolean      @default(false)
+  externalUrl      String?
+  externalPlatform String?      // "youtube" | "udemy" | "coursera"
+
+  // Timestamps
+  startedAt      DateTime?
+  lastAccessedAt DateTime       @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relations
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource       Resource       @relation(fields: [resourceId], references: [id], onDelete: Cascade)
 
   @@unique([userId, resourceId])
   @@map("progress")
