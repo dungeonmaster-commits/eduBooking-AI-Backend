@@ -30,6 +30,12 @@ const config = {
       baseUrl:      'https://www.udemy.com/api-2.0',
       isConfigured: !!(process.env.UDEMY_CLIENT_ID && process.env.UDEMY_CLIENT_SECRET),
     },
+    razorpay: {
+      keyId:         process.env.RAZORPAY_KEY_ID,
+      keySecret:     process.env.RAZORPAY_KEY_SECRET,
+      webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+      isConfigured:  !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
+    },
   };
   
   // Fail fast — crash early if critical config is missing

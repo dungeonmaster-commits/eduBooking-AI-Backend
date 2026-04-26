@@ -10,6 +10,9 @@ import resourceRoutes from './modules/resources/resource.routes.js';
 import bookingRoutes from './modules/bookings/booking.routes.js';
 import progressRoutes from './modules/progress/progress.routes.js';
 import communityRoutes from './modules/community/community.routes.js';
+import messagingRoutes from './modules/messaging/messaging.routes.js';
+import adminRoutes from './modules/admin/admin.routes.js';
+import paymentRoutes from './modules/payments/payment.route.js';
 
 // Middlewares
 import errorMiddleware from './middlewares/error.middleware.js';
@@ -22,6 +25,11 @@ const createApp = () => {
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     credentials: true,
   }));
+
+  app.use('/api/v1/payments/webhook',
+  express.raw({ type: 'application/json' }),
+  paymentRoutes
+);
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -47,6 +55,9 @@ const createApp = () => {
   app.use('/api/v1/bookings',  bookingRoutes);
   app.use('/api/v1/progress', progressRoutes);
   app.use('/api/v1/community', communityRoutes); 
+  app.use('/api/v1/messages', messagingRoutes);
+  app.use('/api/v1/admin', adminRoutes);
+  app.use('/api/v1/payments', paymentRoutes);
 
   // ─── 404 Handler — ALWAYS after all routes ────────────────────────────────
   app.use((req, res) => {
