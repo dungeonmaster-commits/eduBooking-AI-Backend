@@ -86,41 +86,41 @@ export const findConversation = async (userAId, userBId, filters) => {
  * showing the most recent message.
  */
 export const findAllConversations = async (userId) => {
-  // Get all unique users this person has chatted with
-  // We use raw query here for efficiency — Prisma doesn't support
-  // DISTINCT ON natively for this conversation pattern
-  const conversations = await prisma.$queryRaw`
-    SELECT DISTINCT ON (other_user_id)
-      other_user_id,
-      message_id,
-      content,
-      is_read,
-      created_at,
-      sender_id
-    FROM (
-      SELECT
-        CASE
-          WHEN sender_id = ${userId}::uuid THEN receiver_id
-          ELSE sender_id
-        END AS other_user_id,
-        id  AS message_id,
-        content,
-        is_read,
-        created_at,
-        sender_id
-      FROM messages
-      WHERE
-        (sender_id = ${userId}::uuid OR receiver_id = ${userId}::uuid)
-        AND is_deleted = false
-    ) AS convs
-    ORDER BY other_user_id, created_at DESC
-  `;
+  // Get all messages involving this user
+  const messages = await prisma.message.findMany({
+    where: {
+      isDeleted: false,
+      OR: [
+        { senderId:   userId },
+        { receiverId: userId },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id:         true,
+      content:    true,
+      isRead:     true,
+      createdAt:  true,
+      senderId:   true,
+      receiverId: true,
+    },
+  });
 
-  // Fetch profile info for each conversation partner
+  // Group by conversation partner — keep only latest message per partner
+  const conversationMap = new Map();
+
+  for (const msg of messages) {
+    const otherUserId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+    if (!conversationMap.has(otherUserId)) {
+      conversationMap.set(otherUserId, msg);
+    }
+  }
+
+  // Enrich each conversation with user profile + unread count
   const enriched = await Promise.all(
-    conversations.map(async (conv) => {
+    Array.from(conversationMap.entries()).map(async ([otherUserId, lastMsg]) => {
       const otherUser = await prisma.user.findUnique({
-        where:  { id: conv.other_user_id },
+        where:  { id: otherUserId },
         select: {
           id:      true,
           profile: {
@@ -133,10 +133,9 @@ export const findAllConversations = async (userId) => {
         },
       });
 
-      // Count unread messages from this conversation partner
       const unreadCount = await prisma.message.count({
         where: {
-          senderId:   conv.other_user_id,
+          senderId:   otherUserId,
           receiverId: userId,
           isRead:     false,
           isDeleted:  false,
@@ -144,23 +143,22 @@ export const findAllConversations = async (userId) => {
       });
 
       return {
-        user:         otherUser,
+        user: otherUser,
         lastMessage: {
-          id:        conv.message_id,
-          content:   conv.content,
-          isRead:    conv.is_read,
-          createdAt: conv.created_at,
-          isMine:    conv.sender_id === userId,
+          id:        lastMsg.id,
+          content:   lastMsg.content,
+          isRead:    lastMsg.isRead,
+          createdAt: lastMsg.createdAt,
+          isMine:    lastMsg.senderId === userId,
         },
         unreadCount,
       };
     })
   );
 
-  // Sort by most recent message
+  // Sort by most recent
   return enriched.sort(
-    (a, b) =>
-      new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt)
+    (a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt)
   );
 };
 
