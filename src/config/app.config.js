@@ -3,7 +3,7 @@ const config = {
   port: parseInt(process.env.PORT, 10) || 5000,
  
   database: {
-    url: process.env.DATABASE_URL,
+    url: process.env.DATABASE_URI,
   },
 
   jwt: {
@@ -32,7 +32,7 @@ const config = {
 
 // Only validate in production
 if (process.env.NODE_ENV === 'production') {
-  const required = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL'];
+  const required = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URI'];
   for (const key of required) {
     if (!process.env[key]) {
       throw new Error(`Missing required environment variable: ${key}`);
